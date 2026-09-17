@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-const CONNECTION_DEEP_LINK_PREFIX: &str = "dbx://connection/new";
-const AI_CONFIG_DEEP_LINK_PREFIX: &str = "dbx://settings/ai/new";
-const APP_OPEN_DEEP_LINK_PREFIX: &str = "dbx://open";
+const CONNECTION_DEEP_LINK_PREFIX: &str = "dataview://connection/new";
+const AI_CONFIG_DEEP_LINK_PREFIX: &str = "dataview://settings/ai/new";
+const APP_OPEN_DEEP_LINK_PREFIX: &str = "dataview://open";
 
 #[tauri::command]
 pub fn pending_open_connection_links(state: tauri::State<'_, DeepLinkOpenState>) -> Vec<String> {
@@ -109,48 +109,48 @@ mod tests {
     #[test]
     fn filters_connection_deep_links() {
         let links = connection_deep_links_from_args([
-            "dbx://connection/new?type=mysql&host=127.0.0.1",
-            "dbx://settings/ai/new?provider=openai-compatible",
+            "dataview://connection/new?type=mysql&host=127.0.0.1",
+            "dataview://settings/ai/new?provider=openai-compatible",
             "--flag",
-            "dbx://open?x=1",
-            "dbx://connections/new?type=postgres",
-            "dbx://connection/newer?type=mysql",
+            "dataview://open?x=1",
+            "dataview://connections/new?type=postgres",
+            "dataview://connection/newer?type=mysql",
         ]);
 
-        assert_eq!(links, vec!["dbx://connection/new?type=mysql&host=127.0.0.1".to_string()]);
+        assert_eq!(links, vec!["dataview://connection/new?type=mysql&host=127.0.0.1".to_string()]);
     }
 
     #[test]
     fn filters_ai_config_deep_links() {
         let links = ai_config_deep_links_from_args([
-            "dbx://settings/ai/new?v=1&provider=openai-compatible",
+            "dataview://settings/ai/new?v=1&provider=openai-compatible",
             "--flag",
-            "dbx://settings/ai/edit?provider=openai-compatible",
-            "dbx://settings/ai/newer?provider=openai-compatible",
-            "dbx://connection/new?type=mysql",
+            "dataview://settings/ai/edit?provider=openai-compatible",
+            "dataview://settings/ai/newer?provider=openai-compatible",
+            "dataview://connection/new?type=mysql",
         ]);
 
-        assert_eq!(links, vec!["dbx://settings/ai/new?v=1&provider=openai-compatible".to_string()]);
+        assert_eq!(links, vec!["dataview://settings/ai/new?v=1&provider=openai-compatible".to_string()]);
     }
 
     #[test]
     fn recognizes_app_open_deep_links() {
-        assert!(is_app_open_deep_link("dbx://open"));
-        assert!(is_app_open_deep_link(" dbx://open?source=sponsor "));
-        assert!(is_app_open_deep_link("dbx://open/#landing"));
-        assert!(!is_app_open_deep_link("dbx://opened"));
-        assert!(!is_app_open_deep_link("dbx://open/window"));
-        assert!(!is_app_open_deep_link("dbx://connection/new"));
+        assert!(is_app_open_deep_link("dataview://open"));
+        assert!(is_app_open_deep_link(" dataview://open?source=sponsor "));
+        assert!(is_app_open_deep_link("dataview://open/#landing"));
+        assert!(!is_app_open_deep_link("dataview://opened"));
+        assert!(!is_app_open_deep_link("dataview://open/window"));
+        assert!(!is_app_open_deep_link("dataview://connection/new"));
     }
 
     #[test]
     fn drains_pending_links_once() {
         let state = DeepLinkOpenState::default();
-        state.push_connection_links(vec!["dbx://connection/new?type=mysql".to_string()]);
-        state.push_ai_config_links(vec!["dbx://settings/ai/new?provider=openai-compatible".to_string()]);
+        state.push_connection_links(vec!["dataview://connection/new?type=mysql".to_string()]);
+        state.push_ai_config_links(vec!["dataview://settings/ai/new?provider=openai-compatible".to_string()]);
 
-        assert_eq!(state.drain_connection_links(), vec!["dbx://connection/new?type=mysql"]);
-        assert_eq!(state.drain_ai_config_links(), vec!["dbx://settings/ai/new?provider=openai-compatible"]);
+        assert_eq!(state.drain_connection_links(), vec!["dataview://connection/new?type=mysql"]);
+        assert_eq!(state.drain_ai_config_links(), vec!["dataview://settings/ai/new?provider=openai-compatible"]);
         assert!(state.drain_connection_links().is_empty());
         assert!(state.drain_ai_config_links().is_empty());
     }
@@ -159,11 +159,11 @@ mod tests {
     fn dedupes_links_while_preserving_order() {
         assert_eq!(
             dedupe_links(vec![
-                "dbx://connection/new?type=mysql".to_string(),
-                "dbx://connection/new?type=postgres".to_string(),
-                "dbx://connection/new?type=mysql".to_string(),
+                "dataview://connection/new?type=mysql".to_string(),
+                "dataview://connection/new?type=postgres".to_string(),
+                "dataview://connection/new?type=mysql".to_string(),
             ]),
-            vec!["dbx://connection/new?type=mysql", "dbx://connection/new?type=postgres"]
+            vec!["dataview://connection/new?type=mysql", "dataview://connection/new?type=postgres"]
         );
     }
 }

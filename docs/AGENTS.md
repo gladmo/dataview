@@ -8,6 +8,7 @@ This file defines document structure, the bilingual contract, writing rules, and
 - Agent-generated documents use paired files: `<name>.md` is the Chinese primary, displayed by default, and the English translation is recorded as `<name>.en.md` beside it; the pair updates in the same PR — never one side only.
 - AGENTS.md instruction files (root, `docs/`, `.agents/`) are the exception: English only, no inline translations, because they address agents rather than readers of the documentation tree.
 - When paired content drifts, fix the English side against the Chinese authority.
+- Documentation imported from the upstream dbx tree is grandfathered: it follows this contract only from its first modification in this repository.
 - UI-copy i18n and documentation share the terminology table below; terms map one-to-one across the Chinese and English sides.
 
 ## Document structure

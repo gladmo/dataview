@@ -12,7 +12,7 @@ AGENTS.md instruction files (this one, [docs/AGENTS.md](docs/AGENTS.md), [.agent
 
 ## Repository layout
 
-Target layout (not yet materialized when this file was created; treat it as the planning baseline — the actual directories are authoritative):
+Imported from dbx (gladmo `feature-data-view`, 9e99142) with full history; `upstream` tracks t8y2/dbx and `gladmo` the data-view branch. Rebranding: product name dataview, identifier com.dataview.app, deep-link scheme dataview:// (see [NOTICE](NOTICE)).
 
 ```
 apps/desktop/   Vue 3 + TypeScript frontend
@@ -22,10 +22,15 @@ apps/desktop/   Vue 3 + TypeScript frontend
   src/types/         domain types (incl. types/dataView.ts)
   src/i18n/          locale files (dataView.* namespace)
 src-tauri/      Tauri 2 desktop command layer (src-tauri/src/commands/data_view.rs, …)
-crates/         Rust core (dbx-core: data_view.rs, data_view_params.rs; dbx-web: HTTP routes)
-docs/           bilingual documentation (docs/AGENTS.md)
-.agents/         agent notes and skills (.agents/AGENTS.md)
-deploy/         Docker and Compose deployment configs
+crates/         Rust core (dbx-core, dbx-web, dbx-mcp, dbx-cli, dbx-sqlite-worker)
+packages/       published packages (cli, mcp-server, app-tests, …)
+agents/         JDBC agent-driver Gradle projects
+docs/           documentation and VitePress site (docs/AGENTS.md)
+.agents/        agent notes and skills (.agents/AGENTS.md)
+deploy/         Docker, Compose, and database test-lab configs
+examples/       CLI, MCP, Docker, and API samples
+plugins/        plugin host and SDK sources
+scripts/        build, release, and verification scripts
 ```
 
 ## Tech stack

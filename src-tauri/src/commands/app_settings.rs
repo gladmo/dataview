@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(result.plugin_store_dir.as_deref(), Some(path("D:/develop/DBX").as_str()));
         assert_eq!(result.plugins_dir, path("D:/develop/DBX"));
         assert_eq!(result.agents_dir, path("D:/develop/DBX/agents"));
-        assert!(!result.plugins_dir.contains(&path("agents/com.dbx.app/plugins")));
+        assert!(!result.plugins_dir.contains(&path("agents/com.dataview.app/plugins")));
     }
 
     #[test]
@@ -652,7 +652,7 @@ mod tests {
 
         let (plugins_dir, agents_dir) = resolve_driver_store_dirs_from_settings(
             &settings,
-            &PathBuf::from(path("C:/Users/lenovo/AppData/Roaming/com.dbx.app")),
+            &PathBuf::from(path("C:/Users/lenovo/AppData/Roaming/com.dataview.app")),
             Some(PathBuf::from(path("C:/Users/lenovo/.dbx/agents"))),
         );
 
@@ -666,7 +666,7 @@ mod tests {
 
         let (plugins_dir, agents_dir) = resolve_driver_store_dirs_from_settings(
             &settings,
-            &PathBuf::from(path("C:/Users/lenovo/AppData/Roaming/com.dbx.app")),
+            &PathBuf::from(path("C:/Users/lenovo/AppData/Roaming/com.dataview.app")),
             Some(PathBuf::from(path("C:/Users/lenovo/.dbx/agents"))),
         );
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { clipboardApiKeyCandidate, importClipboardApiKeyAfterConfirmation, parseAiConfigDeepLink } from "@/lib/ai/aiConfigDeepLink";
 
 function buildLink(params: Record<string, string>): string {
-  const url = new URL("dbx://settings/ai/new");
+  const url = new URL("dataview://settings/ai/new");
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   return url.toString();
 }
@@ -59,8 +59,8 @@ describe("AI configuration deep links", () => {
   });
 
   it("ignores unrelated DBX routes", () => {
-    expect(parseAiConfigDeepLink("dbx://open")).toBeNull();
-    expect(parseAiConfigDeepLink("dbx://connection/new?type=mysql")).toBeNull();
+    expect(parseAiConfigDeepLink("dataview://open")).toBeNull();
+    expect(parseAiConfigDeepLink("dataview://connection/new?type=mysql")).toBeNull();
   });
 
   it("rejects secrets and ambiguous parameters in the URL", () => {
@@ -79,7 +79,7 @@ describe("AI configuration deep links", () => {
     const duplicate = `${buildLink({ name: "Example AI", provider: "custom", endpoint: "https://api.example.com/v1", model: "example-model" })}&model=other-model`;
     expect(() => parseAiConfigDeepLink(duplicate)).toThrow(/Duplicate parameter/);
 
-    expect(() => parseAiConfigDeepLink("dbx://secret@settings/ai/new?name=Example&provider=custom&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&model=example#token")).toThrow(/must not be included/);
+    expect(() => parseAiConfigDeepLink("dataview://secret@settings/ai/new?name=Example&provider=custom&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&model=example#token")).toThrow(/must not be included/);
   });
 
   it("rejects unsafe or incompatible endpoints and API styles", () => {

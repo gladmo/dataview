@@ -3682,7 +3682,7 @@ mod tests {
 
     #[test]
     fn local_plugin_directory_honors_desktop_storage_settings() {
-        let data_dir = Path::new("C:/Users/user/AppData/Roaming/com.dbx.app");
+        let data_dir = Path::new("C:/Users/user/AppData/Roaming/com.dataview.app");
         let explicit = DesktopSettings {
             plugin_store_dir: Some("D:/DBX/plugins-custom".to_string()),
             ..DesktopSettings::default()
@@ -3696,7 +3696,7 @@ mod tests {
 
     #[test]
     fn local_agent_directory_honors_desktop_storage_settings() {
-        let data_dir = Path::new("C:/Users/user/AppData/Roaming/com.dbx.app");
+        let data_dir = Path::new("C:/Users/user/AppData/Roaming/com.dataview.app");
         let explicit =
             DesktopSettings { agent_store_dir: Some("D:/DBX/agents-custom".to_string()), ..DesktopSettings::default() };
         let legacy = DesktopSettings { driver_store_dir: Some("D:/DBX/drivers".to_string()), ..Default::default() };
