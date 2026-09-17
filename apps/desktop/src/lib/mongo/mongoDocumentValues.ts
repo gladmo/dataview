@@ -1,0 +1,378 @@
+import type { CellValue } from "@/lib/dataGrid/cellValue";
+
+export type MongoInputValue = string | number | boolean | null;
+
+const MONGO_SHELL_DATE_PATTERN = /^(?:ISODate|new Date)\(\s*(["'])(.+)\1\s*\)$/;
+const MONGO_SHELL_NUMBER_LONG_PATTERN = /^NumberLong\(\s*(["'])(-?\d+)\1\s*\)$/;
+const MONGO_OBJECT_ID_PATTERN = /^[a-fA-F0-9]{24}$/;
+const MONGO_INTEGER_PATTERN = /^-?\d+$/;
+// These values are internal to the MongoDB collection grid. BSON strings may
+// contain any UTF-8 text, so strings in this reserved namespace are escaped
+// before entering the grid and restored before being saved.
+const MONGO_DOCUMENT_GRID_PREFIX = "\u0000dbx:mongo-document-grid:";
+const MONGO_DOCUMENT_GRID_ESCAPED_STRING_PREFIX = `${MONGO_DOCUMENT_GRID_PREFIX}string:`;
+export const MONGO_DOCUMENT_GRID_NULL = `${MONGO_DOCUMENT_GRID_PREFIX}null`;
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MIN_BSON_INT64 = -9223372036854775808n;
+const MAX_BSON_INT64 = 9223372036854775807n;
+/** Extended JSON wrapper key -> the BSON scalar it stands for. */
+const MONGO_EXTENDED_JSON_VALUE_TYPES = new Map([
+  ["$binary", "binary"],
+  ["$code", "javascript"],
+  ["$date", "date"],
+  ["$dbPointer", "dbPointer"],
+  ["$maxKey", "maxKey"],
+  ["$minKey", "minKey"],
+  ["$numberDecimal", "decimal128"],
+  ["$numberDouble", "double"],
+  ["$numberInt", "int32"],
+  ["$numberLong", "int64"],
+  ["$oid", "objectId"],
+  ["$regularExpression", "regex"],
+  ["$symbol", "symbol"],
+  ["$timestamp", "timestamp"],
+  ["$undefined", "undefined"],
+  ["$uuid", "uuid"],
+]);
+const MONGO_EXTENDED_JSON_VALUE_KEYS = new Set(MONGO_EXTENDED_JSON_VALUE_TYPES.keys());
+
+/**
+ * The BSON scalar an extended JSON wrapper stands for, or undefined when the value is
+ * a plain object. `{$oid: "..."}` is how the driver ships an ObjectId over JSON; it is
+ * one value, not a subdocument with a `$oid` field.
+ */
+export function mongoExtendedJsonValueType(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const keys = Object.keys(value as Record<string, unknown>);
+  if (keys.length === 2 && keys.includes("$code") && keys.includes("$scope")) return "javascript";
+  return keys.length === 1 ? MONGO_EXTENDED_JSON_VALUE_TYPES.get(keys[0] ?? "") : undefined;
+}
+const MONGO_EXTENDED_JSON_NUMERIC_TYPES = new Map([
+  ["$numberInt", "int32"],
+  ["$numberLong", "int64"],
+  ["$numberDouble", "double"],
+  ["$numberDecimal", "decimal128"],
+] as const);
+
+function mongoDocumentNumericValueType(value: unknown): string | undefined {
+  if (typeof value === "number") return "number";
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+
+  const object = value as Record<string, unknown>;
+  const keys = Object.keys(object);
+  if (keys.length !== 1) return undefined;
+  const key = keys[0] as "$numberInt" | "$numberLong" | "$numberDouble" | "$numberDecimal";
+  return typeof object[key] === "string" ? MONGO_EXTENDED_JSON_NUMERIC_TYPES.get(key) : undefined;
+}
+
+export function mongoDocumentGridColumnTypes(documents: readonly Record<string, unknown>[], columns: readonly string[]): string[] {
+  return columns.map((column) => {
+    let inferredType: string | undefined;
+    for (const document of documents) {
+      const value = document[column];
+      if (value === undefined || value === null) continue;
+      const numericType = mongoDocumentNumericValueType(value);
+      if (!numericType) return "";
+      inferredType = inferredType && inferredType !== numericType ? "number" : numericType;
+    }
+    return inferredType ?? "";
+  });
+}
+
+export function mongoShellDateToExtendedJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const match = value.trim().match(MONGO_SHELL_DATE_PATTERN);
+  if (!match) return value;
+  return { $date: match[2] };
+}
+
+export function parseMongoDocumentInputValue(raw: MongoInputValue): unknown {
+  if (raw === null || typeof raw === "number" || typeof raw === "boolean") return raw;
+
+  const trimmed = raw.trim();
+  if (trimmed === "NULL") return null;
+  if (/^true$/i.test(trimmed)) return true;
+  if (/^false$/i.test(trimmed)) return false;
+  if (/^null$/i.test(trimmed)) return null;
+
+  const shellDate = mongoShellDateToExtendedJson(trimmed);
+  if (shellDate !== trimmed) return shellDate;
+  const shellNumberLong = mongoShellNumberLongToExtendedJson(trimmed);
+  if (shellNumberLong !== trimmed) return shellNumberLong;
+
+  if (MONGO_INTEGER_PATTERN.test(trimmed)) {
+    const integer = BigInt(trimmed);
+    if (integer > MAX_SAFE_BIGINT || integer < -MAX_SAFE_BIGINT) {
+      return integer >= MIN_BSON_INT64 && integer <= MAX_BSON_INT64 ? { $numberLong: trimmed } : trimmed;
+    }
+    return Number(trimmed);
+  }
+  if (/^-?\d+\.\d+$/.test(trimmed)) return Number(trimmed);
+  if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith('"')) {
+    try {
+      return mongoShellDateToExtendedJson(JSON.parse(trimmed));
+    } catch {
+      // JSON-shaped text is still valid user data when it is not valid JSON.
+      return raw;
+    }
+  }
+  return raw;
+}
+
+export function mongoDocumentDisplayValue(value: unknown): unknown {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>;
+    if (Object.keys(object).length === 1 && typeof object.$numberLong === "string") return `NumberLong(${JSON.stringify(object.$numberLong)})`;
+  }
+  return value;
+}
+
+/**
+ * Maps BSON values into the flat collection-grid representation.  The grid
+ * needs an internal sentinel for an explicit BSON null because an empty cell
+ * represents a field that does not exist. The grid formatter renders that
+ * sentinel as NULL, while a literal "NULL" remains ordinary string data.
+ */
+export function mongoDocumentGridValue(value: unknown): unknown {
+  if (value === null) return MONGO_DOCUMENT_GRID_NULL;
+  if (typeof value === "string" && value.startsWith(MONGO_DOCUMENT_GRID_PREFIX)) return `${MONGO_DOCUMENT_GRID_ESCAPED_STRING_PREFIX}${value}`;
+  return mongoDocumentDisplayValue(value);
+}
+
+function mongoDocumentGridEscapedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.startsWith(MONGO_DOCUMENT_GRID_ESCAPED_STRING_PREFIX) ? value.slice(MONGO_DOCUMENT_GRID_ESCAPED_STRING_PREFIX.length) : undefined;
+}
+
+/** Returns the text presented in a collection-grid editor, when customized. */
+export function mongoDocumentGridEditorText(value: unknown): string | undefined {
+  if (value === MONGO_DOCUMENT_GRID_NULL) return "NULL";
+  return mongoDocumentGridEscapedString(value);
+}
+
+/** Returns the custom display text required by collection-grid BSON values. */
+export function mongoDocumentGridDisplayText(value: unknown): string | undefined {
+  if (value === MONGO_DOCUMENT_GRID_NULL) return "NULL";
+  const escapedString = mongoDocumentGridEscapedString(value);
+  if (escapedString !== undefined) return JSON.stringify(escapedString);
+  return value === "NULL" ? JSON.stringify(value) : undefined;
+}
+
+/** Restores a collection-grid value before it leaves the grid externally. */
+export function mongoDocumentGridExternalValue(value: CellValue): CellValue {
+  if (value === MONGO_DOCUMENT_GRID_NULL) return null;
+  const escapedString = mongoDocumentGridEscapedString(value);
+  return escapedString === undefined ? value : escapedString;
+}
+
+/** Preserves encoded grid clipboard values and escapes other reserved input. */
+export function mongoDocumentGridInputValue(value: string): string {
+  // Internal copy/paste already carries encoded values; escaping again would
+  // save BSON null as a literal sentinel string.
+  if (value === MONGO_DOCUMENT_GRID_NULL || value.startsWith(MONGO_DOCUMENT_GRID_ESCAPED_STRING_PREFIX)) return value;
+  return value.startsWith(MONGO_DOCUMENT_GRID_PREFIX) ? `${MONGO_DOCUMENT_GRID_ESCAPED_STRING_PREFIX}${value}` : value;
+}
+
+function parseMongoExistingFieldInputValue(raw: Exclude<MongoInputValue, null>, originalValue: unknown): unknown {
+  // Objects and arrays are serialized into grid text too, so the raw document
+  // is the only reliable way to distinguish them from JSON-shaped BSON strings.
+  // The collection grid's private sentinel represents an explicit BSON null.
+  // A literal "NULL" remains a normal string, including in Mongo query results.
+  if (raw === MONGO_DOCUMENT_GRID_NULL) return null;
+  const escapedString = mongoDocumentGridEscapedString(raw);
+  if (escapedString !== undefined) return escapedString;
+  if (typeof originalValue === "string") {
+    return typeof raw === "string" ? raw : String(raw);
+  }
+  return parseMongoDocumentInputValue(raw);
+}
+
+function mongoDocumentFieldValue(document: unknown, field: string): unknown {
+  if (!document || typeof document !== "object" || Array.isArray(document)) return undefined;
+  return (document as Record<string, unknown>)[field];
+}
+
+function mongoShellNumberLongToExtendedJson(value: string): unknown {
+  const match = value.match(MONGO_SHELL_NUMBER_LONG_PATTERN);
+  return match ? { $numberLong: match[2] } : value;
+}
+
+export function buildMongoUpdateDocument(changes: Map<number, MongoInputValue>, columns: string[], originalDocument?: unknown): Record<string, unknown> {
+  const setFields: Record<string, unknown> = {};
+  const unsetFields: Record<string, unknown> = {};
+  for (const [colIdx, newVal] of changes) {
+    const col = columns[colIdx];
+    if (!col || col === "_id") continue;
+    if (newVal === null) {
+      unsetFields[col] = "";
+    } else {
+      setFields[col] = parseMongoExistingFieldInputValue(newVal, mongoDocumentFieldValue(originalDocument, col));
+    }
+  }
+  const doc: Record<string, unknown> = {};
+  if (Object.keys(setFields).length > 0) doc.$set = setFields;
+  if (Object.keys(unsetFields).length > 0) doc.$unset = unsetFields;
+  return doc;
+}
+
+export function buildMongoCopyUpdateDocument(row: MongoInputValue[], columns: string[], dirtyColumns: boolean[], originalDocument?: unknown, idColumn = "_id"): Record<string, unknown> | null {
+  if (!originalDocument || typeof originalDocument !== "object" || Array.isArray(originalDocument)) return null;
+
+  const source = originalDocument as Record<string, unknown>;
+  const setFields: Record<string, unknown> = {};
+  const unsetFields: Record<string, unknown> = {};
+  for (let columnIndex = 0; columnIndex < columns.length; columnIndex++) {
+    const column = columns[columnIndex];
+    if (!column || column === idColumn) continue;
+
+    const value = row[columnIndex] ?? null;
+    if (dirtyColumns[columnIndex]) {
+      if (value === null) {
+        unsetFields[column] = "";
+      } else {
+        setFields[column] = parseMongoExistingFieldInputValue(value, source[column]);
+      }
+      continue;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(source, column)) {
+      setFields[column] = source[column];
+    } else {
+      unsetFields[column] = "";
+    }
+  }
+
+  const update: Record<string, unknown> = {};
+  if (Object.keys(setFields).length > 0) update.$set = setFields;
+  if (Object.keys(unsetFields).length > 0) update.$unset = unsetFields;
+  return Object.keys(update).length > 0 ? update : null;
+}
+
+export function applyMongoGridChangesToDocument(document: unknown, changes: Map<number, MongoInputValue>, columns: string[]): unknown {
+  if (!document || typeof document !== "object" || Array.isArray(document)) return document;
+
+  const updated = { ...(document as Record<string, unknown>) };
+  for (const [colIdx, newVal] of changes) {
+    const column = columns[colIdx];
+    if (!column || column === "_id") continue;
+    if (newVal === null) {
+      delete updated[column];
+    } else {
+      updated[column] = parseMongoExistingFieldInputValue(newVal, updated[column]);
+    }
+  }
+  return updated;
+}
+
+function mongoDocumentIdentityKey(document: unknown): string | undefined {
+  if (!document || typeof document !== "object" || Array.isArray(document)) return undefined;
+  const object = document as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(object, "_id")) return undefined;
+  return JSON.stringify(object._id);
+}
+
+export function applyMongoGridChangesToDocumentBaseline(baselineDocuments: unknown[], currentDocuments: unknown[], dirtyRows: Map<number, Map<number, MongoInputValue>>, columns: string[]): unknown[] {
+  const changesByDocumentId = new Map<string, Map<number, MongoInputValue>>();
+  for (const [rowIndex, changes] of dirtyRows) {
+    const identityKey = mongoDocumentIdentityKey(currentDocuments[rowIndex]);
+    if (identityKey !== undefined) changesByDocumentId.set(identityKey, changes);
+  }
+  return baselineDocuments.map((document) => {
+    const identityKey = mongoDocumentIdentityKey(document);
+    const changes = identityKey === undefined ? undefined : changesByDocumentId.get(identityKey);
+    return changes ? applyMongoGridChangesToDocument(document, changes, columns) : document;
+  });
+}
+
+export function buildMongoInsertDocument(row: MongoInputValue[], columns: string[]): Record<string, unknown> {
+  const doc: Record<string, unknown> = {};
+  for (let ci = 0; ci < columns.length; ci++) {
+    const col = columns[ci];
+    if (!col || col === "_id") continue;
+    const val = row[ci];
+    if (val === null) continue;
+    doc[col] = val === MONGO_DOCUMENT_GRID_NULL ? null : (mongoDocumentGridEscapedString(val) ?? parseMongoDocumentInputValue(val));
+  }
+  return doc;
+}
+
+export function buildMongoCopyInsertDocument(row: MongoInputValue[], columns: string[], options: { excludePrimaryKeys?: boolean } = {}): Record<string, unknown> {
+  const doc: Record<string, unknown> = {};
+  for (let ci = 0; ci < columns.length; ci++) {
+    const col = columns[ci];
+    if (!col || (options.excludePrimaryKeys && col === "_id")) continue;
+    const val = row[ci];
+    if (val === null) continue;
+    if (col === "_id" && typeof val === "string" && MONGO_OBJECT_ID_PATTERN.test(val)) {
+      doc[col] = { $oid: val };
+      continue;
+    }
+    doc[col] = val === MONGO_DOCUMENT_GRID_NULL ? null : (mongoDocumentGridEscapedString(val) ?? parseMongoDocumentInputValue(val));
+  }
+  return doc;
+}
+
+export function buildMongoCopyDocumentFromOriginal(original: unknown, row: MongoInputValue[], columns: string[], dirtyColumns: boolean[], options: { excludePrimaryKeys?: boolean } = {}): Record<string, unknown> | null {
+  if (!original || typeof original !== "object" || Array.isArray(original)) return null;
+
+  const source = original as Record<string, unknown>;
+  const document: Record<string, unknown> = {};
+  for (let columnIndex = 0; columnIndex < columns.length; columnIndex++) {
+    const column = columns[columnIndex];
+    if (!column || (options.excludePrimaryKeys && column === "_id")) continue;
+
+    // Display strings are ambiguous, so only explicitly edited cells may replace original BSON values.
+    if (dirtyColumns[columnIndex]) {
+      const value = row[columnIndex];
+      if (value !== null) {
+        document[column] = value === MONGO_DOCUMENT_GRID_NULL ? null : (mongoDocumentGridEscapedString(value) ?? parseMongoDocumentInputValue(value));
+      }
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(source, column)) document[column] = source[column];
+  }
+  return document;
+}
+
+export function formatMongoShellLiteral(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(formatMongoShellLiteral).join(",")}]`;
+  if (typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    const keys = Object.keys(object);
+    if (keys.length === 1 && typeof object.$date === "string") {
+      return `ISODate(${JSON.stringify(object.$date)})`;
+    }
+    if (keys.length === 1 && typeof object.$oid === "string" && MONGO_OBJECT_ID_PATTERN.test(object.$oid)) {
+      return `ObjectId(${JSON.stringify(object.$oid)})`;
+    }
+    if (keys.length === 1 && typeof object.$numberLong === "string") {
+      return `NumberLong(${JSON.stringify(object.$numberLong)})`;
+    }
+    if ((keys.length === 1 && MONGO_EXTENDED_JSON_VALUE_KEYS.has(keys[0] ?? "")) || (keys.length === 2 && keys.includes("$code") && keys.includes("$scope"))) {
+      return `EJSON.deserialize(${JSON.stringify(object)})`;
+    }
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${formatMongoShellLiteral(object[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(String(value));
+}
+
+export function serializeMongoDocumentId(value: unknown): string {
+  if (typeof value === "string") return `__dbx_mongo_string_id__${JSON.stringify(value)}`;
+  if (isMongoExtendedJsonId(value)) return JSON.stringify(value);
+  return String(value);
+}
+
+export function mongoDocumentIdForGrid(value: unknown): MongoInputValue {
+  if (isMongoExtendedJsonId(value)) return String(value.$numberLong ?? value.$oid);
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  return JSON.stringify(value);
+}
+
+function isMongoExtendedJsonId(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const object = value as Record<string, unknown>;
+  const keys = Object.keys(object);
+  return keys.length === 1 && (typeof object.$numberLong === "string" || typeof object.$oid === "string");
+}
