@@ -135,9 +135,6 @@ import {
   checkBackgroundImage,
   clearBackgroundImage,
   saveBackgroundImage,
-  checkBackgroundImage,
-  clearBackgroundImage,
-  saveBackgroundImage,
   loadMaxAgentTurns,
   saveMaxAgentTurns,
   loadMaxRetries,
@@ -215,7 +212,7 @@ import {
   type EditorSettingsDraft,
   type EditorSettingsDraftKey,
 } from "@/lib/settings/editorSettingsDraft";
-import { applyEditorSettingsDraftToRefs, type EditorSettingsDraftRefMap } from "@/lib/settings/applyEditorSettingsDraft";
+
 import { serializeSettingsTransfer, sortTransferCategories, transferCategoryForKey, type SettingsTransferCategoryId } from "@/lib/settings/settingsTransfer";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSavedSqlStore } from "@/stores/savedSqlStore";
@@ -1325,122 +1322,6 @@ function syncEditorSettingsDraftFromStore() {
   hasImportedSettingsPendingApply.value = false;
 }
 
-// Mirror of syncEditorSettingsDraftFromStore for loading draft values into
-// the edit refs. Draft values are already settings-shaped and normalized, so
-// this only performs the ref-specific representations (joined textarea
-// strings, grid rows, editable snippet copies). Accepts a key subset so a
-// partial update (settings import) writes exactly the listed refs and leaves
-// every other in-progress edit untouched. The base snapshot is intentionally
-// left untouched: changed values stay unapplied until the user clicks Apply,
-// exactly like hand-edited draft values.
-const editorSettingsDraftRefs: EditorSettingsDraftRefMap = {
-  fontFamily: editFontFamily,
-  fontSize: editFontSize,
-  tableFontFamily: editTableFontFamily,
-  uiFontFamily: editUiFontFamily,
-  uiScale: editUiScale,
-  theme: editTheme,
-  backgroundImage: editBackgroundImage,
-  customThemes: editCustomThemes,
-  activeCustomThemeId: editActiveCustomThemeId,
-  executeMode: editExecuteMode,
-  executeAllOnBlankLine: editExecuteAllOnBlankLine,
-  showExecutionTargetPicker: editShowExecutionTargetPicker,
-  showStatementRunButtons: editShowStatementRunButtons,
-  showLineNumbers: editShowLineNumbers,
-  showCurrentStatementFrame: editShowCurrentStatementFrame,
-  showInsertValueHints: editShowInsertValueHints,
-  autoAliasTables: editAutoAliasTables,
-  insertSpaceAfterCompletion: editInsertSpaceAfterCompletion,
-  sortCompletionColumnsAlphabetically: editSortCompletionColumnsAlphabetically,
-  selectFirstCompletionOnOpen: editSelectFirstCompletionOnOpen,
-  wordWrap: editWordWrap,
-  vimModeEnabled: editVimModeEnabled,
-  autoCloseBrackets: editAutoCloseBrackets,
-  sqlSemanticDiagnosticsMode: editSqlSemanticDiagnosticsMode,
-  confirmDangerousSqlExecution: editConfirmDangerousSqlExecution,
-  confirmUnsavedSqlClose: editConfirmUnsavedSqlClose,
-  appCloseUnsavedTabsMode: editAppCloseUnsavedTabsMode,
-  savedSqlOpenTargetMode: editSavedSqlOpenTargetMode,
-  appLayout: editAppLayout,
-  tabLayout: editTabLayout,
-  tabPlacement: editTabPlacement,
-  tabGroupMode: editTabGroupMode,
-  tabSortMode: editTabSortMode,
-  showColumnCommentsInHeader: editShowColumnCommentsInHeader,
-  showColumnTypesInHeader: editShowColumnTypesInHeader,
-  dataGridShowTransposeFieldMetadata: editDataGridShowTransposeFieldMetadata,
-  colorizeDataGridCellTypes: editColorizeDataGridCellTypes,
-  dataGridTypeColorSchemes: editDataGridTypeColorSchemes,
-  activeDataGridTypeColorSchemeId: editActiveDataGridTypeColorSchemeId,
-  showIndexIndicatorsInHeader: editShowIndexIndicatorsInHeader,
-  compactColumnHeaderActions: editCompactColumnHeaderActions,
-  dataGridQuickEntry: editDataGridQuickEntry,
-  dataGridFilterEditorView: editDataGridFilterEditorView,
-  dataGridKeepFilterEditorExpanded: editDataGridKeepFilterEditorExpanded,
-  dataGridTextFilterPanelHeight: editDataGridTextFilterPanelHeight,
-  defaultAutoKeepResults: editDefaultAutoKeepResults,
-  multiStatementDefaultView: editMultiStatementDefaultView,
-  dataGridAutoTransposeSingleRow: editDataGridAutoTransposeSingleRow,
-  dataGridCellDetailButtonVisible: editDataGridCellDetailButtonVisible,
-  dataGridCrosshairHighlight: editDataGridCrosshairHighlight,
-  pageSize: editPageSize,
-  tableOpenPageSize: editTableOpenPageSize,
-  queryResultMaxRowsEnabled: editQueryResultMaxRowsEnabled,
-  queryResultMaxRows: editQueryResultMaxRows,
-  externalSqlEditorMaxMb: editExternalSqlEditorMaxMb,
-  infiniteScroll: editInfiniteScroll,
-  regexMaxMatchCount: editRegexMaxMatchCount,
-  autoCalculateTotalRows: editAutoCalculateTotalRows,
-  flatteningMultiLineText: editFlatteningMultiLineText,
-  shortcuts: editShortcuts,
-  sqlFormatter: editSqlFormatter,
-  sidebarActivation: editSidebarActivation,
-  sidebarObjectDisplay: editSidebarObjectDisplay,
-  routineSourceOpenMode: editRoutineSourceOpenMode,
-  sidebarTableSearchEnabled: editSidebarTableSearchEnabled,
-  autoSelectActiveSidebarNode: editAutoSelectActiveSidebarNode,
-  sidebarBrowseObjectsOnDatabaseActivation: editSidebarBrowseObjectsOnDatabaseActivation,
-  openTabsRestoreMode: editOpenTabsRestoreMode,
-  disconnectTabHandlingMode: editDisconnectTabHandlingMode,
-  dataTabReuseMode: editDataTabReuseMode,
-  openDataTabsNextToActive: editOpenDataTabsNextToActive,
-  prefillNewQueryWithSelect: editPrefillNewQueryWithSelect,
-  generateSqlIncludeDatabaseName: editGenerateSqlIncludeDatabaseName,
-  generateSqlQuoteIdentifiers: editGenerateSqlQuoteIdentifiers,
-  formatSqlOnSqlFileSave: editFormatSqlOnSqlFileSave,
-  showTableDdlHoverPreview: editShowTableDdlHoverPreview,
-  updateNotificationsEnabled: editUpdateNotificationsEnabled,
-  sidebarObjectInfoMode: editSidebarObjectInfoMode,
-  sidebarAllowHorizontalScroll: editSidebarAllowHorizontalScroll,
-  sidebarShowTooltips: editSidebarShowTooltips,
-  sidebarIndent: editSidebarIndent,
-  sidebarFontSize: editSidebarFontSize,
-  sidebarHiddenTablePrefixes: editSidebarHiddenTablePrefixes,
-  sidebarCopyTableNameSeparator: editSidebarCopyTableNameSeparator,
-  sidebarCopyTableNameIncludeSchema: editSidebarCopyTableNameIncludeSchema,
-  redisKeyTemplates: editRedisKeyTemplates,
-  exportBatchSize: editExportBatchSize,
-  csvQuoteMode: editCsvQuoteMode,
-  exportRowLimitEnabled: editExportRowLimitEnabled,
-  exportRowLimit: editExportRowLimit,
-  queryExportKeysetOptimizationEnabled: editQueryExportKeysetOptimizationEnabled,
-  globalDateTimeDisplayFormat: editGlobalDateTimeDisplayFormat,
-  globalDateTimeExportFormat: editGlobalDateTimeExportFormat,
-  globalDateTimeImportFormat: editGlobalDateTimeImportFormat,
-  updateDownloadSource: editUpdateDownloadSource,
-  toolbarItems: editToolbarItems,
-  snippets: editSnippets,
-  sqlShortcuts: editSqlShortcuts,
-  sqlVariableSubstitutionEnabled: editSqlVariableSubstitutionEnabled,
-  sqlVariableSyntaxOverrides: editSqlVariableSyntaxOverrides,
-  continueOnErrorOnBatch: editContinueOnErrorOnBatch,
-  clickTableNavigationTarget: editClickTableNavigationTarget,
-  completionTriggerMode: editCompletionTriggerMode,
-  defaultTransactionMode: editDefaultTransactionMode,
-  tableColumnTemplateFields: editTableColumnTemplateRows,
-};
-
 function applyEditorSettingsKeysToRefs(draft: EditorSettingsDraft, keys: readonly EditorSettingsDraftKey[]) {
   for (const key of keys) {
     switch (key) {
@@ -1571,8 +1452,14 @@ function applyEditorSettingsKeysToRefs(draft: EditorSettingsDraft, keys: readonl
       case "dataGridFilterEditorView":
         editDataGridFilterEditorView.value = draft.dataGridFilterEditorView;
         break;
-      case "dataGridAutoHideFilterBuilder":
-        editDataGridAutoHideFilterBuilder.value = draft.dataGridAutoHideFilterBuilder;
+      case "dataGridKeepFilterEditorExpanded":
+        editDataGridKeepFilterEditorExpanded.value = draft.dataGridKeepFilterEditorExpanded;
+        break;
+      case "defaultAutoKeepResults":
+        editDefaultAutoKeepResults.value = draft.defaultAutoKeepResults;
+        break;
+      case "externalSqlEditorMaxMb":
+        editExternalSqlEditorMaxMb.value = draft.externalSqlEditorMaxMb;
         break;
       case "dataGridTextFilterPanelHeight":
         editDataGridTextFilterPanelHeight.value = draft.dataGridTextFilterPanelHeight;
