@@ -187,6 +187,16 @@ export default withEnglishFallback({
     export: "导出",
     importSuccess: "已导入“{name}”",
     importInvalidFile: "该文件不是有效的数据视图导出文件。",
+    general: "基本信息",
+    extractVariables: "从 SQL 提取",
+    emptyVariablesHint: "还没有变量，可从 SQL 中提取或手动添加。",
+    autoRefresh: "自动刷新",
+    autoRefreshOff: "关闭",
+    refreshedAgo: "更新于 {duration} 前",
+    panelStats: "{rows} 行 · {cols} 列",
+    panelNoData: "暂无数据",
+    showVariables: "展开变量",
+    hideVariables: "收起变量",
   },
   customType: {
     kinds: {

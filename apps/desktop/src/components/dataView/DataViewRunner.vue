@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Play, Loader2, AlertCircle, Pencil, CheckCircle2, LayoutGrid, Check, GripVertical } from "@lucide/vue";
+import { Play, Loader2, AlertCircle, CheckCircle2, LayoutGrid, Check, GripVertical, RefreshCw, ChevronsDownUp, ChevronsUpDown, Table2, BarChart3, Clock3, Zap } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import LightTooltip from "@/components/ui/LightTooltip.vue";
 import DangerConfirmDialog from "@/components/editor/DangerConfirmDialog.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DataGrid from "@/components/grid/DataGrid.vue";
@@ -13,6 +15,7 @@ import QueryLoadingState from "@/components/common/QueryLoadingState.vue";
 import { useDataViewStore } from "@/stores/dataViewStore";
 import { resolveDynamicDefault } from "@/lib/dataView/dynamicDefaults";
 import { resolveDisplayResult } from "@/lib/dataView/dataViewResultDisplay";
+import { AUTO_REFRESH_INTERVALS, autoRefreshTickMs, formatShortDuration, nextAutoRefreshDelayMs } from "@/lib/dataView/dataViewAutoRefresh";
 import { formatRedisCommandResult } from "@/lib/redis/redisValuePresentation";
 import { formatElapsedSeconds } from "@/lib/common/elapsedTime";
 import { clampGridPos, columnWidthPx, compactLayout, gridContainerHeightPx, gridRectToPixels, pixelDeltaToGridUnits, resolveGridLayout } from "@/lib/dataView/dataViewGridLayout";
@@ -49,6 +52,7 @@ function stopRunTimer() {
   if (runElapsedTimer) clearInterval(runElapsedTimer);
   runElapsedTimer = undefined;
 }
+
 const displayModes = reactive<Record<string, DataViewDisplayMode>>({});
 // Per-mutation execution state keyed by query id.
 const mutationBusy = reactive<Record<string, boolean>>({});
@@ -65,6 +69,54 @@ function resetDefaults() {
 }
 
 const missingRequired = computed(() => props.view.variables.filter((v) => v.required && !String(values[v.name] ?? "").trim()).map((v) => v.name));
+
+// Grafana-style dashboard controls: manual run, auto-refresh interval, and a
+// "refreshed N ago" status driven by a 1s ticker.
+const autoRefreshId = ref<string>("off");
+const lastRunStartedAtMs = ref<number | null>(null);
+const lastRefreshedAtMs = ref<number | null>(null);
+const ageNowMs = ref(Date.now());
+let autoRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+let ageTimer: ReturnType<typeof setInterval> | undefined;
+
+const refreshedAgoLabel = computed(() => {
+  if (lastRefreshedAtMs.value === null) return "";
+  return formatShortDuration(ageNowMs.value - lastRefreshedAtMs.value);
+});
+
+function autoRefreshIntervalLabel(id: string): string {
+  return id === "off" ? t("dataView.autoRefreshOff") : id;
+}
+
+/** Re-arms the auto-refresh setTimeout chain from the last run's start, so slow
+ *  runs never stack ticks. Hidden documents skip the run but keep the chain. */
+function scheduleAutoRefresh() {
+  if (autoRefreshTimer) {
+    clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = undefined;
+  }
+  const tickMs = autoRefreshTickMs(autoRefreshId.value);
+  if (!tickMs || readQueries.value.length === 0) return;
+  autoRefreshTimer = setTimeout(
+    () => {
+      autoRefreshTimer = undefined;
+      if (!document.hidden && !running.value && missingRequired.value.length === 0) void run();
+      scheduleAutoRefresh();
+    },
+    nextAutoRefreshDelayMs(tickMs, lastRunStartedAtMs.value, Date.now()),
+  );
+}
+
+watch(autoRefreshId, scheduleAutoRefresh);
+
+onMounted(() => {
+  ageTimer = setInterval(() => {
+    ageNowMs.value = Date.now();
+  }, 1000);
+});
+
+// Variables row collapse state (Grafana hides the variables submenu the same way).
+const variablesVisible = ref(true);
 
 // Dashboard-grid layout (drag/resize) for the results panels, edit-mode only.
 const layoutEditing = ref(false);
@@ -273,6 +325,8 @@ onBeforeUnmount(() => {
   finishPanelResize(false);
   containerResizeObserver?.disconnect();
   stopRunTimer();
+  if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
+  if (ageTimer) clearInterval(ageTimer);
 });
 
 watch(
@@ -316,10 +370,21 @@ function displayResultFor(result: DataViewQueryResult) {
   return resolveDisplayResult(result, queryFor(result.queryId));
 }
 
+/** Row count of a panel's dataset; `null` when there is no tabular result. */
+function panelRowCount(result: DataViewQueryResult): number | null {
+  const display = displayResultFor(result);
+  return display ? display.rows.length : null;
+}
+
+function panelColumnCount(result: DataViewQueryResult): number {
+  return displayResultFor(result)?.columns.length ?? 0;
+}
+
 async function run() {
   if (running.value || readQueries.value.length === 0) return;
   runError.value = null;
   running.value = true;
+  lastRunStartedAtMs.value = Date.now();
   startRunTimer();
   try {
     const response = await store.execute(props.view.id, buildPayload(), {
@@ -331,7 +396,9 @@ async function run() {
     runError.value = error instanceof Error ? error.message : String(error);
   } finally {
     running.value = false;
+    lastRefreshedAtMs.value = Date.now();
     stopRunTimer();
+    scheduleAutoRefresh();
   }
 }
 
@@ -368,18 +435,68 @@ async function executeMutation() {
 </script>
 
 <template>
-  <div class="flex h-full flex-col gap-3 overflow-auto" :class="embedded ? 'p-4' : ''">
-    <!-- Shared variable inputs -->
-    <div class="flex flex-wrap items-end gap-3 rounded-md border bg-card p-3">
-      <div v-for="variable in view.variables" :key="variable.name" class="flex flex-col gap-1">
-        <Label class="text-xs font-medium text-muted-foreground">
+  <div class="flex h-full flex-col">
+    <!-- Dashboard controls (Grafana-style): run, auto-refresh, status, layout -->
+    <div v-if="readQueries.length > 0 || view.variables.length > 0" class="relative flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-2">
+      <Button v-if="readQueries.length > 0" size="sm" class="h-6 gap-1 px-2.5 text-xs" :disabled="running || missingRequired.length > 0" @click="run">
+        <Loader2 v-if="running" class="h-3 w-3 animate-spin" />
+        <Play v-else class="h-3 w-3" />
+        {{ t("dataView.run") }}
+      </Button>
+
+      <template v-if="readQueries.length > 0">
+        <LightTooltip :text="t('dataView.autoRefresh')" side="bottom">
+          <Select v-model="autoRefreshId">
+            <SelectTrigger class="h-6 w-[86px] gap-1 px-2 text-xs" :aria-label="t('dataView.autoRefresh')">
+              <Clock3 class="h-3 w-3 shrink-0" :class="autoRefreshId !== 'off' ? 'text-primary' : 'text-muted-foreground'" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="interval in AUTO_REFRESH_INTERVALS" :key="interval.id" :value="interval.id">{{ autoRefreshIntervalLabel(interval.id) }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </LightTooltip>
+
+        <span v-if="running" class="flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground">
+          <Loader2 class="h-3 w-3 animate-spin" />
+          {{ runElapsedSeconds }}s
+        </span>
+        <span v-else-if="refreshedAgoLabel" class="flex items-center gap-1 text-[11px] tabular-nums text-muted-foreground">
+          <RefreshCw class="h-3 w-3" />
+          {{ t("dataView.refreshedAgo", { duration: refreshedAgoLabel }) }}
+        </span>
+      </template>
+
+      <span class="flex-1" />
+
+      <LightTooltip v-if="view.variables.length > 0" :text="variablesVisible ? t('dataView.hideVariables') : t('dataView.showVariables')" side="bottom">
+        <Button variant="ghost" size="icon" class="h-6 w-6" :aria-label="variablesVisible ? t('dataView.hideVariables') : t('dataView.showVariables')" @click="variablesVisible = !variablesVisible">
+          <ChevronsDownUp v-if="variablesVisible" class="h-3.5 w-3.5" />
+          <ChevronsUpDown v-else class="h-3.5 w-3.5" />
+        </Button>
+      </LightTooltip>
+      <LightTooltip v-if="!embedded && readQueries.length > 0" :text="layoutEditing ? t('dataView.doneEditing') : t('dataView.editLayout')" side="bottom">
+        <Button variant="ghost" size="icon" class="h-6 w-6" :class="layoutEditing ? 'bg-accent text-primary' : ''" :aria-label="layoutEditing ? t('dataView.doneEditing') : t('dataView.editLayout')" @click="layoutEditing = !layoutEditing">
+          <Check v-if="layoutEditing" class="h-3.5 w-3.5" />
+          <LayoutGrid v-else class="h-3.5 w-3.5" />
+        </Button>
+      </LightTooltip>
+
+      <!-- Thin indeterminate loading bar while (re-)running, Grafana-style -->
+      <div v-if="running" class="data-view-loading-bar absolute inset-x-0 bottom-0" aria-hidden="true" />
+    </div>
+
+    <!-- Shared variable inputs, collapsible like Grafana's variables submenu -->
+    <div v-if="view.variables.length > 0 && variablesVisible" class="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b bg-muted/10 px-3 py-2">
+      <div v-for="variable in view.variables" :key="variable.name" class="flex items-center gap-1.5">
+        <Label class="shrink-0 text-xs font-medium text-muted-foreground">
           {{ variable.label || variable.name }}
           <span v-if="variable.required" class="text-destructive">*</span>
         </Label>
 
         <template v-if="variable.inputType === 'select'">
           <Select v-model="values[variable.name]">
-            <SelectTrigger class="h-8 w-48">
+            <SelectTrigger class="h-7 w-44 text-xs">
               <SelectValue :placeholder="variable.name" />
             </SelectTrigger>
             <SelectContent>
@@ -389,91 +506,99 @@ async function executeMutation() {
         </template>
 
         <template v-else-if="variable.kind === 'boolean'">
-          <input type="checkbox" class="h-4 w-4" :checked="values[variable.name] === 'true'" @change="values[variable.name] = ($event.target as HTMLInputElement).checked ? 'true' : 'false'" />
+          <Switch :model-value="values[variable.name] === 'true'" @update:model-value="(checked: boolean) => (values[variable.name] = checked ? 'true' : 'false')" />
         </template>
 
         <template v-else>
-          <Input v-model="values[variable.name]" :type="variable.kind === 'date' ? 'date' : variable.kind === 'number' ? 'number' : 'text'" class="h-8 w-48" :placeholder="variable.name" @keydown.enter="run" />
+          <Input v-model="values[variable.name]" :type="variable.kind === 'date' ? 'date' : variable.kind === 'number' ? 'number' : 'text'" class="h-7 w-44 text-xs" :placeholder="variable.name" @keydown.enter="run" />
         </template>
       </div>
-
-      <Button v-if="readQueries.length > 0" :disabled="running || missingRequired.length > 0" class="h-8" @click="run">
-        <Loader2 v-if="running" class="mr-1 h-4 w-4 animate-spin" />
-        <Play v-else class="mr-1 h-4 w-4" />
-        {{ t("dataView.run") }}
-      </Button>
-
-      <Button v-if="!embedded && readQueries.length > 0" size="sm" :variant="layoutEditing ? 'secondary' : 'outline'" class="h-8" @click="layoutEditing = !layoutEditing">
-        <Check v-if="layoutEditing" class="mr-1 h-4 w-4" />
-        <LayoutGrid v-else class="mr-1 h-4 w-4" />
-        {{ layoutEditing ? t("dataView.doneEditing") : t("dataView.editLayout") }}
-      </Button>
     </div>
 
-    <div v-if="runError" class="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm text-destructive">
-      <AlertCircle class="h-4 w-4 shrink-0" />
-      <span>{{ runError }}</span>
-    </div>
-
-    <!-- Re-run indicator: keeps stale results visible while a fresh run is in flight. -->
-    <div v-if="running && results.length > 0" class="flex items-center gap-2 rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-      <Loader2 class="h-3.5 w-3.5 animate-spin" />
-      <span>{{ t("dataView.running") }}</span>
-      <span class="tabular-nums">· {{ runElapsedSeconds }}s</span>
-    </div>
-
-    <!-- Update (mutation) actions -->
-    <div v-if="mutationQueries.length > 0" class="flex flex-col gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
-      <span class="text-xs font-medium text-amber-700 dark:text-amber-300">{{ t("dataView.updates") }}</span>
-      <div v-for="query in mutationQueries" :key="query.id" class="flex items-center gap-2">
-        <span class="text-sm">{{ query.title || t("dataView.untitledQuery") }}</span>
-        <Button size="sm" variant="destructive" class="h-7" :disabled="mutationBusy[query.id] || missingRequired.length > 0" @click="requestMutation(query)">
-          <Loader2 v-if="mutationBusy[query.id]" class="mr-1 h-4 w-4 animate-spin" />
-          <Pencil v-else class="mr-1 h-4 w-4" />
-          {{ t("dataView.executeUpdate") }}
-        </Button>
-        <span v-if="mutationResult[query.id]?.error" class="flex items-center gap-1 text-xs text-destructive"> <AlertCircle class="h-3.5 w-3.5" />{{ mutationResult[query.id].error }} </span>
-        <span v-else-if="mutationResult[query.id]?.result" class="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400"> <CheckCircle2 class="h-3.5 w-3.5" />{{ t("dataView.affectedRows", { count: mutationResult[query.id].result?.affected_rows ?? 0 }) }} </span>
-        <span v-else-if="mutationResult[query.id]?.redisValue !== undefined" class="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400"> <CheckCircle2 class="h-3.5 w-3.5" />{{ formatRedisCommandResult(mutationResult[query.id].redisValue) }} </span>
+    <div class="min-h-0 flex-1 overflow-auto">
+      <div v-if="runError" class="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
+        <AlertCircle class="h-4 w-4 shrink-0" />
+        <span class="min-w-0 break-all">{{ runError }}</span>
       </div>
-    </div>
 
-    <!-- Results, laid out on a 12-column dashboard grid; drag/resize handles only render in edit mode. -->
-    <div v-if="results.length > 0" ref="gridContainerRef" class="relative" :style="{ height: `${gridHeightPx}px` }">
-      <div v-for="result in results" :key="result.queryId" class="absolute flex flex-col overflow-hidden rounded-md border bg-card" :class="layoutEditing ? 'ring-1 ring-primary/20' : ''" :style="panelStyle(result.queryId)">
-        <div class="flex shrink-0 items-center gap-1 border-b px-3 py-2">
-          <GripVertical v-if="layoutEditing" class="h-4 w-4 shrink-0 cursor-grab touch-none text-muted-foreground active:cursor-grabbing" @pointerdown="startPanelDrag(result.queryId, $event)" />
-          <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ result.title || t("dataView.untitledQuery") }}</span>
-          <div v-if="displayResultFor(result)" class="flex shrink-0 items-center gap-1">
-            <Button size="sm" :variant="displayModeFor(result) === 'table' ? 'secondary' : 'ghost'" class="h-6 px-2 text-xs" @click="setDisplayMode(result.queryId, 'table')">
-              {{ t("dataView.table") }}
-            </Button>
-            <Button size="sm" :variant="displayModeFor(result) === 'chart' ? 'secondary' : 'ghost'" class="h-6 px-2 text-xs" @click="setDisplayMode(result.queryId, 'chart')">
-              {{ t("dataView.chart") }}
-            </Button>
+      <!-- Update (mutation) actions -->
+      <div v-if="mutationQueries.length > 0" class="mx-3 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5">
+        <div class="flex items-center gap-1.5 px-0.5 pb-1.5">
+          <Zap class="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span class="text-xs font-medium text-amber-700 dark:text-amber-300">{{ t("dataView.updates") }}</span>
+        </div>
+        <div v-for="query in mutationQueries" :key="query.id" class="flex flex-wrap items-center gap-2 rounded-md px-1 py-1.5">
+          <span class="min-w-0 flex-1 truncate text-[13px]" :title="query.title || t('dataView.untitledQuery')">{{ query.title || t("dataView.untitledQuery") }}</span>
+          <Button size="sm" variant="destructive" class="h-6 gap-1 px-2 text-xs" :disabled="mutationBusy[query.id] || missingRequired.length > 0" @click="requestMutation(query)">
+            <Loader2 v-if="mutationBusy[query.id]" class="h-3 w-3 animate-spin" />
+            <Zap v-else class="h-3 w-3" />
+            {{ t("dataView.executeUpdate") }}
+          </Button>
+          <span v-if="mutationResult[query.id]?.error" class="flex w-full items-center gap-1 text-xs text-destructive">
+            <AlertCircle class="h-3.5 w-3.5 shrink-0" />
+            <span class="min-w-0 break-all">{{ mutationResult[query.id].error }}</span>
+          </span>
+          <span v-else-if="mutationResult[query.id]?.result" class="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 class="h-3.5 w-3.5 shrink-0" />
+            {{ t("dataView.affectedRows", { count: mutationResult[query.id].result?.affected_rows ?? 0 }) }}
+          </span>
+          <span v-else-if="mutationResult[query.id]?.redisValue !== undefined" class="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 class="h-3.5 w-3.5 shrink-0" />
+            {{ formatRedisCommandResult(mutationResult[query.id].redisValue) }}
+          </span>
+        </div>
+      </div>
+
+      <!-- Results, laid out on a 12-column dashboard grid; drag/resize handles only render in edit mode. -->
+      <div v-if="results.length > 0" class="p-3">
+        <div ref="gridContainerRef" class="relative" :style="{ height: `${gridHeightPx}px` }">
+          <div v-for="result in results" :key="result.queryId" class="group absolute flex flex-col overflow-hidden rounded-lg border bg-card shadow-xs transition-shadow hover:shadow-md" :class="layoutEditing ? 'ring-1 ring-primary/30' : ''" :style="panelStyle(result.queryId)">
+            <div class="flex h-8 shrink-0 items-center gap-1.5 border-b bg-muted/30 px-2.5">
+              <GripVertical v-if="layoutEditing" class="h-4 w-4 shrink-0 cursor-grab touch-none text-muted-foreground active:cursor-grabbing" @pointerdown="startPanelDrag(result.queryId, $event)" />
+              <span class="min-w-0 flex-1 truncate text-[13px] font-medium" :title="result.title || t('dataView.untitledQuery')">{{ result.title || t("dataView.untitledQuery") }}</span>
+              <div v-if="!result.error && displayResultFor(result)" class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                <LightTooltip :text="t('dataView.table')" side="bottom">
+                  <Button variant="ghost" size="icon" class="h-5 w-5" :class="displayModeFor(result) === 'table' ? 'bg-accent text-foreground' : 'text-muted-foreground'" :aria-label="t('dataView.table')" @click="setDisplayMode(result.queryId, 'table')">
+                    <Table2 class="h-3 w-3" />
+                  </Button>
+                </LightTooltip>
+                <LightTooltip :text="t('dataView.chart')" side="bottom">
+                  <Button variant="ghost" size="icon" class="h-5 w-5" :class="displayModeFor(result) === 'chart' ? 'bg-accent text-foreground' : 'text-muted-foreground'" :aria-label="t('dataView.chart')" @click="setDisplayMode(result.queryId, 'chart')">
+                    <BarChart3 class="h-3 w-3" />
+                  </Button>
+                </LightTooltip>
+              </div>
+            </div>
+
+            <div v-if="result.error" class="flex min-h-0 flex-1 items-center gap-2 px-3 py-3 text-[13px] text-destructive">
+              <AlertCircle class="h-4 w-4 shrink-0" />
+              <span class="min-w-0 break-all">{{ result.error }}</span>
+            </div>
+            <div v-else-if="panelRowCount(result) === 0" class="flex min-h-0 flex-1 items-center justify-center px-3 py-6 text-[12px] text-muted-foreground">
+              {{ t("dataView.panelNoData") }}
+            </div>
+            <div v-else-if="displayResultFor(result)" class="min-h-0 flex-1">
+              <QueryChart v-if="displayModeFor(result) === 'chart'" :result="displayResultFor(result)!" :default-chart-type="chartConfigFor(result.queryId)?.type" :default-x-column="chartConfigFor(result.queryId)?.xColumn" :default-y-columns="chartConfigFor(result.queryId)?.yColumns" />
+              <DataGrid v-else :result="displayResultFor(result)!" :editable="false" />
+            </div>
+
+            <div v-if="!result.error && displayResultFor(result)" class="flex h-6 shrink-0 items-center border-t px-2.5 text-[11px] tabular-nums text-muted-foreground">
+              {{ t("dataView.panelStats", { rows: panelRowCount(result) ?? 0, cols: panelColumnCount(result) }) }}
+            </div>
+
+            <div v-if="layoutEditing" class="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none text-muted-foreground" @pointerdown="startPanelResize(result.queryId, $event)">
+              <svg viewBox="0 0 16 16" class="h-full w-full" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M13 3 L3 13 M13 8 L8 13 M13 13 L13 13" />
+              </svg>
+            </div>
           </div>
         </div>
-
-        <div v-if="result.error" class="flex items-center gap-2 p-3 text-sm text-destructive">
-          <AlertCircle class="h-4 w-4 shrink-0" />
-          <span>{{ result.error }}</span>
-        </div>
-        <div v-else-if="displayResultFor(result)" class="min-h-0 flex-1">
-          <QueryChart v-if="displayModeFor(result) === 'chart'" :result="displayResultFor(result)!" :default-chart-type="chartConfigFor(result.queryId)?.type" :default-x-column="chartConfigFor(result.queryId)?.xColumn" :default-y-columns="chartConfigFor(result.queryId)?.yColumns" />
-          <DataGrid v-else :result="displayResultFor(result)!" :editable="false" />
-        </div>
-
-        <div v-if="layoutEditing" class="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none text-muted-foreground" @pointerdown="startPanelResize(result.queryId, $event)">
-          <svg viewBox="0 0 16 16" class="h-full w-full" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M13 3 L3 13 M13 8 L8 13 M13 13 L13 13" />
-          </svg>
-        </div>
       </div>
-    </div>
 
-    <QueryLoadingState v-if="running && results.length === 0" label-key="dataView.running" :elapsed-seconds="runElapsedSeconds" class="rounded-md border border-dashed p-6" />
-    <div v-else-if="results.length === 0 && !running && readQueries.length > 0" class="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-      {{ t("dataView.emptyRunHint") }}
+      <QueryLoadingState v-if="running && results.length === 0" label-key="dataView.running" :elapsed-seconds="runElapsedSeconds" class="m-3 rounded-lg border border-dashed p-8" />
+      <div v-else-if="results.length === 0 && !running && readQueries.length > 0 && !runError" class="m-3 rounded-lg border border-dashed p-8 text-center text-[13px] text-muted-foreground">
+        {{ t("dataView.emptyRunHint") }}
+      </div>
     </div>
 
     <DangerConfirmDialog
@@ -487,3 +612,32 @@ async function executeMutation() {
     />
   </div>
 </template>
+
+<style scoped>
+/* Thin indeterminate progress bar pinned under the controls toolbar while a
+ * run is in flight — the same affordance Grafana uses for dashboard loading. */
+.data-view-loading-bar {
+  height: 2px;
+  overflow: hidden;
+  background: transparent;
+}
+
+.data-view-loading-bar::after {
+  content: "";
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: 9999px;
+  background-color: var(--primary);
+  animation: data-view-loading-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes data-view-loading-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+</style>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, toRaw, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { Plus, Trash2, Wand2, ChevronLeft, ChevronDown, ChevronRight, Eye, Loader2, AlertCircle, GripVertical, Pencil } from "@lucide/vue";
+import { Plus, Trash2, Wand2, ChevronLeft, ChevronDown, ChevronRight, Eye, Loader2, AlertCircle, GripVertical, Pencil, Settings2, Braces, Database } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import LightTooltip from "@/components/ui/LightTooltip.vue";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DataGrid from "@/components/grid/DataGrid.vue";
@@ -466,164 +467,205 @@ async function previewView() {
         <span>{{ previewError }}</span>
       </div>
 
-      <div class="grid grid-cols-2 gap-3">
-        <div class="flex flex-col gap-1">
-          <Label class="text-xs font-medium text-muted-foreground">{{ t("dataView.name") }}</Label>
-          <Input v-model="draft.name" :placeholder="t('dataView.name')" />
+      <!-- General -->
+      <section class="rounded-lg border bg-card">
+        <div class="flex h-8 items-center gap-1.5 border-b bg-muted/30 px-3">
+          <Settings2 class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span class="text-xs font-medium">{{ t("dataView.general") }}</span>
         </div>
-        <div class="flex flex-col gap-1">
-          <Label class="text-xs font-medium text-muted-foreground">{{ t("dataView.defaultDisplayMode") }}</Label>
-          <Select v-model="draft.defaultDisplayMode">
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="mode in displayModes" :key="mode" :value="mode">{{ t(`dataView.${mode}`) }}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div class="col-span-2 flex flex-col gap-1">
-          <Label class="text-xs font-medium text-muted-foreground">{{ t("dataView.description") }}</Label>
-          <Input :model-value="draft.description ?? ''" :placeholder="t('dataView.description')" @update:model-value="(v) => (draft.description = String(v))" />
-        </div>
-      </div>
-
-      <!-- Variables -->
-      <div class="flex flex-col gap-2 rounded-md border p-3">
-        <div class="flex items-center gap-2">
-          <span class="text-sm font-medium">{{ t("dataView.variables") }}</span>
-          <Button size="sm" variant="ghost" class="ml-auto" @click="extractVariables"><Wand2 class="mr-1 h-4 w-4" />SQL</Button>
-          <Button size="sm" variant="ghost" @click="addVariable"><Plus class="h-4 w-4" /></Button>
-        </div>
-        <p class="text-xs text-muted-foreground">{{ t("dataView.dynamicDefaultHint") }}</p>
-        <div v-for="(variable, index) in draft.variables" :key="index" class="flex items-center gap-2">
-          <Input v-model="variable.name" class="h-8 w-40" :placeholder="t('dataView.variableName')" />
-          <Input v-model="variable.label" class="h-8 w-40" :placeholder="t('dataView.variableLabel')" />
-          <Select v-model="variable.kind">
-            <SelectTrigger class="h-8 w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="kind in variableKinds" :key="kind" :value="kind">{{ kind }}</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input :model-value="variable.defaultValue ?? ''" class="h-8 w-32" :placeholder="t('dataView.variableDefault')" @update:model-value="(v) => (variable.defaultValue = String(v))" />
-          <Label class="flex cursor-default items-center gap-1 text-xs text-muted-foreground"> <input type="checkbox" v-model="variable.required" class="h-4 w-4" />{{ t("dataView.required") }} </Label>
-          <Button size="sm" variant="ghost" @click="removeVariable(index)"><Trash2 class="h-4 w-4 text-destructive" /></Button>
-        </div>
-      </div>
-
-      <!-- Queries -->
-      <div class="flex flex-col gap-2 rounded-md border p-3">
-        <div class="flex items-center gap-2">
-          <span class="text-sm font-medium">{{ t("dataView.queries") }}</span>
-          <Button size="sm" variant="ghost" class="ml-auto" @click="addQuery"><Plus class="mr-1 h-4 w-4" />{{ t("dataView.addQuery") }}</Button>
-        </div>
-
-        <div v-if="draft.queries.length === 0" class="flex flex-col items-center gap-2 rounded-md border border-dashed px-4 py-8 text-center">
-          <p class="text-xs text-muted-foreground">{{ t("dataView.emptyQueriesHint") }}</p>
-          <Button size="sm" @click="addQuery"><Plus class="mr-1 h-3.5 w-3.5" />{{ t("dataView.addQuery") }}</Button>
-        </div>
-
-        <div ref="queriesListRef" class="flex flex-col gap-2">
-          <div v-for="(query, index) in draft.queries" :key="query.id" data-query-row class="flex flex-col gap-2 rounded-md border p-2" :class="queryDragState?.dragging && queryDragState.sourceIndex === index ? 'opacity-0 pointer-events-none' : ''" :style="queryRowStyle(index)">
-            <div class="flex items-center gap-2">
-              <button type="button" class="flex h-8 w-5 shrink-0 cursor-grab items-center justify-center touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing" @pointerdown="startQueryDrag(index, $event)">
-                <GripVertical class="h-4 w-4" />
-              </button>
-              <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-muted text-[11px] font-medium text-muted-foreground">{{ String.fromCharCode(65 + (index % 26)) }}</span>
-              <Input v-model="query.title" class="h-8 flex-1" :placeholder="t('dataView.queryTitle')" />
-              <Select v-model="query.kind">
-                <SelectTrigger class="h-8 w-28"><SelectValue :placeholder="t('dataView.query')" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="query">{{ t("dataView.query") }}</SelectItem>
-                  <SelectItem value="mutation">{{ t("dataView.mutation") }}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select :model-value="query.displayMode ?? INHERIT" @update:model-value="(v) => setDisplayMode(query, String(v))">
-                <SelectTrigger class="h-8 w-36"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem :value="INHERIT">{{ t("dataView.inheritDisplayMode") }}</SelectItem>
-                  <SelectItem v-for="mode in displayModes" :key="mode" :value="mode">{{ t(`dataView.${mode}`) }}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select v-if="effectiveDisplayMode(query) === 'chart'" :model-value="query.chartConfig?.type ?? 'bar'" @update:model-value="(v) => setChartType(query, v as DataViewChartType)">
-                <SelectTrigger class="h-8 w-24"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="ct in chartTypes" :key="ct" :value="ct">{{ t(`chart.${ct}`) }}</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button size="sm" :variant="query.kind === 'mutation' ? 'destructive' : 'ghost'" class="ml-auto shrink-0" :disabled="previewBusy[query.id] || !query.connectionId" @click="previewQuery(query)">
-                <Loader2 v-if="previewBusy[query.id]" class="mr-1 h-4 w-4 animate-spin" />
-                <Pencil v-else-if="query.kind === 'mutation'" class="mr-1 h-4 w-4" />
-                <Eye v-else class="mr-1 h-4 w-4" />
-                {{ query.kind === "mutation" ? t("dataView.executeUpdate") : t("dataView.preview") }}
-              </Button>
-              <LightTooltip :text="collapsedQueries[query.id] ? t('dataView.expandQuery') : t('dataView.collapseQuery')" side="bottom">
-                <Button size="sm" variant="ghost" class="shrink-0 px-1" @click="toggleQueryCollapsed(query.id)">
-                  <ChevronRight v-if="collapsedQueries[query.id]" class="h-4 w-4" />
-                  <ChevronDown v-else class="h-4 w-4" />
-                </Button>
-              </LightTooltip>
-              <Button size="sm" variant="ghost" class="shrink-0" @click="removeQuery(index)"><Trash2 class="h-4 w-4 text-destructive" /></Button>
-            </div>
-
-            <template v-if="!collapsedQueries[query.id]">
-              <div class="flex flex-wrap items-center gap-2">
-                <ConnectionTreeSelect
-                  :model-value="query.connectionId"
-                  :connections="connectionStore.connections"
-                  :layout="connectionStore.sidebarLayout"
-                  trigger-class="h-8 w-56"
-                  :placeholder="t('editor.selectConnection')"
-                  :search-placeholder="t('editor.searchConnection')"
-                  :empty-text="t('grid.noSearchResults')"
-                  @update:model-value="(connectionId) => onQueryConnectionChange(query, connectionId)"
-                />
-                <Select :model-value="query.database || ''" @update:model-value="(v) => (query.database = String(v))">
-                  <SelectTrigger class="h-8 w-44"><SelectValue :placeholder="t('editor.selectDatabase')" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="db in databaseOptionsForQuery(query)" :key="db || '__default__'" :value="db">{{ db || t("editor.defaultDatabase") }}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input v-if="isSchemaAware(databaseTypeForQuery(query))" :model-value="query.schema ?? ''" class="h-8 w-32" :placeholder="t('editor.selectSchema')" @update:model-value="(v) => (query.schema = String(v) || null)" />
-              </div>
-
-              <div class="h-56 overflow-hidden rounded-md border">
-                <QueryEditor
-                  :model-value="query.sqlTemplate"
-                  :connection-id="query.connectionId"
-                  :database="query.database"
-                  :schema="query.schema ?? undefined"
-                  :database-type="databaseTypeForQuery(query)"
-                  :dialect="dialectForQuery(query)"
-                  :syntax-dialect="syntaxDialectForQuery(query)"
-                  :format-dialect="formatDialectForQuery(query)"
-                  hide-execution-controls
-                  force-word-wrap
-                  @update:model-value="(v) => (query.sqlTemplate = v)"
-                />
-              </div>
-
-              <div v-if="previewResults[query.id]" class="flex min-h-40 flex-col rounded-md border">
-                <div v-if="previewResults[query.id].error" class="flex items-center gap-2 p-2 text-xs text-destructive">
-                  <AlertCircle class="h-3.5 w-3.5 shrink-0" />
-                  <span>{{ previewResults[query.id].error }}</span>
-                </div>
-                <div v-else-if="resolveDisplayResult(previewResults[query.id], query)" class="h-56">
-                  <QueryChart
-                    v-if="effectiveDisplayMode(query) === 'chart'"
-                    :result="resolveDisplayResult(previewResults[query.id], query)!"
-                    :default-chart-type="query.chartConfig?.type"
-                    :default-x-column="query.chartConfig?.xColumn"
-                    :default-y-columns="query.chartConfig?.yColumns"
-                    @update:chart-type="(type) => setChartType(query, type)"
-                    @update:x-column="(column) => setChartAxis(query, { xColumn: column })"
-                    @update:y-columns="(columns) => setChartAxis(query, { yColumns: columns })"
-                  />
-                  <DataGrid v-else :result="resolveDisplayResult(previewResults[query.id], query)!" :editable="false" />
-                </div>
-              </div>
-            </template>
+        <div class="flex flex-wrap items-end gap-3 p-3">
+          <div class="flex min-w-44 flex-1 flex-col gap-1">
+            <Label class="text-xs font-medium text-muted-foreground">{{ t("dataView.name") }}</Label>
+            <Input v-model="draft.name" :placeholder="t('dataView.name')" />
+          </div>
+          <div class="flex min-w-44 flex-[2] flex-col gap-1">
+            <Label class="text-xs font-medium text-muted-foreground">{{ t("dataView.description") }}</Label>
+            <Input :model-value="draft.description ?? ''" :placeholder="t('dataView.description')" @update:model-value="(v) => (draft.description = String(v))" />
+          </div>
+          <div class="flex w-40 flex-col gap-1">
+            <Label class="text-xs font-medium text-muted-foreground">{{ t("dataView.defaultDisplayMode") }}</Label>
+            <Select v-model="draft.defaultDisplayMode">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="mode in displayModes" :key="mode" :value="mode">{{ t(`dataView.${mode}`) }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
-      </div>
+      </section>
+
+      <!-- Variables -->
+      <section class="rounded-lg border bg-card">
+        <div class="flex h-8 items-center gap-1.5 border-b bg-muted/30 px-3">
+          <Braces class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span class="text-xs font-medium">{{ t("dataView.variables") }}</span>
+          <span class="rounded-full bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">{{ draft.variables.length }}</span>
+          <span class="flex-1" />
+          <Button size="sm" variant="ghost" class="h-6 gap-1 px-2 text-xs" @click="extractVariables"><Wand2 class="h-3 w-3" />{{ t("dataView.extractVariables") }}</Button>
+          <Button size="sm" variant="ghost" class="h-6 w-6 px-0" @click="addVariable"><Plus class="h-3.5 w-3.5" /></Button>
+        </div>
+        <div class="p-3">
+          <p class="mb-2 text-xs text-muted-foreground">{{ t("dataView.dynamicDefaultHint") }}</p>
+          <template v-if="draft.variables.length > 0">
+            <div class="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_88px_120px_auto_32px] items-center gap-2 border-b pb-1.5 text-[11px] font-medium text-muted-foreground">
+              <span>{{ t("dataView.variableName") }}</span>
+              <span>{{ t("dataView.variableLabel") }}</span>
+              <span>{{ t("dataView.variableKind") }}</span>
+              <span>{{ t("dataView.variableDefault") }}</span>
+              <span class="text-center">{{ t("dataView.required") }}</span>
+              <span />
+            </div>
+            <div v-for="(variable, index) in draft.variables" :key="index" class="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_88px_120px_auto_32px] items-center gap-2 border-b py-1.5 last:border-b-0">
+              <Input v-model="variable.name" class="h-8" :placeholder="t('dataView.variableName')" />
+              <Input v-model="variable.label" class="h-8" :placeholder="t('dataView.variableLabel')" />
+              <Select v-model="variable.kind">
+                <SelectTrigger class="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="kind in variableKinds" :key="kind" :value="kind">{{ kind }}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input :model-value="variable.defaultValue ?? ''" class="h-8" :placeholder="t('dataView.variableDefault')" @update:model-value="(v) => (variable.defaultValue = String(v))" />
+              <div class="flex justify-center">
+                <Switch v-model="variable.required" />
+              </div>
+              <Button size="sm" variant="ghost" class="h-8 w-8 px-0" :aria-label="t('dataView.delete')" @click="removeVariable(index)"><Trash2 class="h-3.5 w-3.5 text-destructive" /></Button>
+            </div>
+          </template>
+          <div v-else class="flex items-center justify-center gap-2 rounded-md border border-dashed px-3 py-4 text-xs text-muted-foreground">
+            {{ t("dataView.emptyVariablesHint") }}
+          </div>
+        </div>
+      </section>
+
+      <!-- Queries -->
+      <section class="rounded-lg border bg-card">
+        <div class="flex h-8 items-center gap-1.5 border-b bg-muted/30 px-3">
+          <Database class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span class="text-xs font-medium">{{ t("dataView.queries") }}</span>
+          <span class="rounded-full bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">{{ draft.queries.length }}</span>
+          <span class="flex-1" />
+          <Button size="sm" variant="ghost" class="h-6 gap-1 px-2 text-xs" @click="addQuery"><Plus class="h-3 w-3" />{{ t("dataView.addQuery") }}</Button>
+        </div>
+
+        <div class="flex flex-col gap-2 p-3">
+          <div v-if="draft.queries.length === 0" class="flex flex-col items-center gap-2 rounded-md border border-dashed px-4 py-8 text-center">
+            <p class="text-xs text-muted-foreground">{{ t("dataView.emptyQueriesHint") }}</p>
+            <Button size="sm" @click="addQuery"><Plus class="mr-1 h-3.5 w-3.5" />{{ t("dataView.addQuery") }}</Button>
+          </div>
+
+          <div ref="queriesListRef" class="flex flex-col gap-2">
+            <div
+              v-for="(query, index) in draft.queries"
+              :key="query.id"
+              data-query-row
+              class="flex flex-col gap-2 rounded-md border bg-background/40 p-2 shadow-xs transition-colors"
+              :class="[queryDragState?.dragging && queryDragState.sourceIndex === index ? 'opacity-0 pointer-events-none' : '', query.kind === 'mutation' ? 'border-amber-500/40' : '']"
+              :style="queryRowStyle(index)"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <button type="button" class="flex h-8 w-5 shrink-0 cursor-grab items-center justify-center touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing" @pointerdown="startQueryDrag(index, $event)">
+                  <GripVertical class="h-4 w-4" />
+                </button>
+                <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[11px] font-semibold" :class="query.kind === 'mutation' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-muted text-muted-foreground'">
+                  {{ String.fromCharCode(65 + (index % 26)) }}
+                </span>
+                <Input v-model="query.title" class="h-8 min-w-40 flex-1" :placeholder="t('dataView.queryTitle')" />
+                <Select v-model="query.kind">
+                  <SelectTrigger class="h-8 w-28"><SelectValue :placeholder="t('dataView.query')" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="query">{{ t("dataView.query") }}</SelectItem>
+                    <SelectItem value="mutation">{{ t("dataView.mutation") }}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select :model-value="query.displayMode ?? INHERIT" @update:model-value="(v) => setDisplayMode(query, String(v))">
+                  <SelectTrigger class="h-8 w-36"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="INHERIT">{{ t("dataView.inheritDisplayMode") }}</SelectItem>
+                    <SelectItem v-for="mode in displayModes" :key="mode" :value="mode">{{ t(`dataView.${mode}`) }}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select v-if="effectiveDisplayMode(query) === 'chart'" :model-value="query.chartConfig?.type ?? 'bar'" @update:model-value="(v) => setChartType(query, v as DataViewChartType)">
+                  <SelectTrigger class="h-8 w-24"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="ct in chartTypes" :key="ct" :value="ct">{{ t(`chart.${ct}`) }}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button size="sm" :variant="query.kind === 'mutation' ? 'destructive' : 'secondary'" class="ml-auto h-8 shrink-0 gap-1" :disabled="previewBusy[query.id] || !query.connectionId" @click="previewQuery(query)">
+                  <Loader2 v-if="previewBusy[query.id]" class="h-3.5 w-3.5 animate-spin" />
+                  <Pencil v-else-if="query.kind === 'mutation'" class="h-3.5 w-3.5" />
+                  <Eye v-else class="h-3.5 w-3.5" />
+                  {{ query.kind === "mutation" ? t("dataView.executeUpdate") : t("dataView.preview") }}
+                </Button>
+                <LightTooltip :text="collapsedQueries[query.id] ? t('dataView.expandQuery') : t('dataView.collapseQuery')" side="bottom">
+                  <Button size="sm" variant="ghost" class="h-8 w-8 shrink-0 px-0" @click="toggleQueryCollapsed(query.id)">
+                    <ChevronRight v-if="collapsedQueries[query.id]" class="h-4 w-4" />
+                    <ChevronDown v-else class="h-4 w-4" />
+                  </Button>
+                </LightTooltip>
+                <Button size="sm" variant="ghost" class="h-8 w-8 shrink-0 px-0" :aria-label="t('dataView.delete')" @click="removeQuery(index)"><Trash2 class="h-4 w-4 text-destructive" /></Button>
+              </div>
+
+              <template v-if="!collapsedQueries[query.id]">
+                <div class="flex flex-wrap items-center gap-2">
+                  <ConnectionTreeSelect
+                    :model-value="query.connectionId"
+                    :connections="connectionStore.connections"
+                    :layout="connectionStore.sidebarLayout"
+                    trigger-class="h-8 w-56"
+                    :placeholder="t('editor.selectConnection')"
+                    :search-placeholder="t('editor.searchConnection')"
+                    :empty-text="t('grid.noSearchResults')"
+                    @update:model-value="(connectionId) => onQueryConnectionChange(query, connectionId)"
+                  />
+                  <Select :model-value="query.database || ''" @update:model-value="(v) => (query.database = String(v))">
+                    <SelectTrigger class="h-8 w-44"><SelectValue :placeholder="t('editor.selectDatabase')" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="db in databaseOptionsForQuery(query)" :key="db || '__default__'" :value="db">{{ db || t("editor.defaultDatabase") }}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input v-if="isSchemaAware(databaseTypeForQuery(query))" :model-value="query.schema ?? ''" class="h-8 w-32" :placeholder="t('editor.selectSchema')" @update:model-value="(v) => (query.schema = String(v) || null)" />
+                </div>
+
+                <div class="h-56 overflow-hidden rounded-md border">
+                  <QueryEditor
+                    :model-value="query.sqlTemplate"
+                    :connection-id="query.connectionId"
+                    :database="query.database"
+                    :schema="query.schema ?? undefined"
+                    :database-type="databaseTypeForQuery(query)"
+                    :dialect="dialectForQuery(query)"
+                    :syntax-dialect="syntaxDialectForQuery(query)"
+                    :format-dialect="formatDialectForQuery(query)"
+                    hide-execution-controls
+                    force-word-wrap
+                    @update:model-value="(v) => (query.sqlTemplate = v)"
+                  />
+                </div>
+
+                <div v-if="previewResults[query.id]" class="flex min-h-40 flex-col rounded-md border">
+                  <div v-if="previewResults[query.id].error" class="flex items-center gap-2 p-2 text-xs text-destructive">
+                    <AlertCircle class="h-3.5 w-3.5 shrink-0" />
+                    <span>{{ previewResults[query.id].error }}</span>
+                  </div>
+                  <div v-else-if="resolveDisplayResult(previewResults[query.id], query)" class="h-56">
+                    <QueryChart
+                      v-if="effectiveDisplayMode(query) === 'chart'"
+                      :result="resolveDisplayResult(previewResults[query.id], query)!"
+                      :default-chart-type="query.chartConfig?.type"
+                      :default-x-column="query.chartConfig?.xColumn"
+                      :default-y-columns="query.chartConfig?.yColumns"
+                      @update:chart-type="(type) => setChartType(query, type)"
+                      @update:x-column="(column) => setChartAxis(query, { xColumn: column })"
+                      @update:y-columns="(columns) => setChartAxis(query, { yColumns: columns })"
+                    />
+                    <DataGrid v-else :result="resolveDisplayResult(previewResults[query.id], query)!" :editable="false" />
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <DangerConfirmDialog

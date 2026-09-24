@@ -175,10 +175,19 @@ function summaryMenuItems(summary: DataViewSummary): ContextMenuItem[] {
 <template>
   <div class="flex h-full flex-col">
     <template v-if="mode === 'list'">
-      <div class="flex h-9 shrink-0 items-center gap-1 border-b bg-muted/20 px-2">
+      <div class="flex h-9 shrink-0 items-center gap-1.5 border-b bg-muted/20 px-2">
         <LayoutDashboard class="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
         <h2 class="text-[13px] font-medium">{{ t("dataView.title") }}</h2>
         <span class="text-[12px] text-muted-foreground">({{ visibleSummaries.length }})</span>
+
+        <div class="relative ml-2 min-w-0 max-w-64 flex-1">
+          <Search class="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+          <input v-model="searchText" type="text" class="h-6 w-full rounded border border-border bg-background pl-7 pr-6 text-[12px] placeholder:text-muted-foreground/70 focus:outline-none focus:ring-1 focus:ring-ring" :placeholder="t('dataView.search')" />
+          <button v-if="searchText" type="button" class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground" :aria-label="t('dataView.search')" @click="searchText = ''">
+            <X class="h-3 w-3" />
+          </button>
+        </div>
+
         <span class="flex-1" />
         <LightTooltip :text="t('dataView.refresh')" side="bottom">
           <Button variant="ghost" size="icon" class="h-5 w-5" :disabled="store.loading" @click="store.refresh()">
@@ -198,41 +207,44 @@ function summaryMenuItems(summary: DataViewSummary): ContextMenuItem[] {
         </LightTooltip>
       </div>
 
-      <div class="shrink-0 border-b px-2 py-1">
-        <div class="relative">
-          <Search class="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-          <input v-model="searchText" type="text" class="h-6 w-full rounded border border-border bg-background pl-7 pr-6 text-[13px] focus:outline-none focus:ring-1 focus:ring-ring" :placeholder="t('dataView.search')" />
-          <button v-if="searchText" type="button" class="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground" :aria-label="t('dataView.search')" @click="searchText = ''">
-            <X class="h-3 w-3" />
-          </button>
-        </div>
-      </div>
-
       <div class="min-h-0 flex-1 overflow-y-auto py-1">
         <div v-if="store.loading" class="flex items-center justify-center py-12">
           <Loader2 class="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
         <div v-else-if="store.sortedSummaries.length === 0" class="flex justify-center px-4 py-12">
-          <div class="w-full max-w-sm rounded-xl border border-dashed px-4 py-8 text-center">
-            <p class="text-[13px] text-muted-foreground">{{ t("dataView.emptyListHint") }}</p>
-            <Button size="sm" class="mt-3" @click="createNew">
+          <div class="flex w-full max-w-sm flex-col items-center rounded-xl border border-dashed px-4 py-10 text-center">
+            <span class="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-500/10">
+              <LayoutDashboard class="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+            </span>
+            <p class="mt-3 text-[13px] text-muted-foreground">{{ t("dataView.emptyListHint") }}</p>
+            <Button size="sm" class="mt-4" @click="createNew">
               <Plus class="mr-1 h-3.5 w-3.5" />
               {{ t("dataView.newView") }}
             </Button>
           </div>
         </div>
-        <div v-else-if="visibleSummaries.length === 0" class="px-4 py-12 text-center text-[13px] text-muted-foreground">
-          {{ t("dataView.noSearchResults") }}
+        <div v-else-if="visibleSummaries.length === 0" class="flex flex-col items-center gap-2 px-4 py-12 text-center">
+          <Search class="h-5 w-5 text-muted-foreground/50" />
+          <span class="text-[13px] text-muted-foreground">{{ t("dataView.noSearchResults") }}</span>
         </div>
         <template v-else>
           <CustomContextMenu v-for="summary in visibleSummaries" :key="summary.id" :items="summaryMenuItems(summary)">
             <template #default="{ onContextMenu }">
-              <div class="group flex cursor-default items-center gap-1.5 px-2 py-1.5 text-[13px] hover:bg-accent" :title="summary.name" @click="openRunner(summary.id)" @dblclick="openEditor(summary.id)" @contextmenu.prevent="onContextMenu($event)">
-                <LayoutDashboard class="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" />
-                <span class="min-w-0 flex-1 truncate">{{ summary.name }}</span>
-                <span v-if="summary.description" class="hidden max-w-[25%] shrink truncate text-[11px] text-muted-foreground/80 md:inline" :title="summary.description">{{ summary.description }}</span>
-                <span class="shrink-0 text-[11px] tabular-nums text-muted-foreground/80">{{ summary.queryCount }} {{ t("dataView.queries") }}</span>
-                <span class="shrink-0 text-[11px] tabular-nums text-muted-foreground/80">{{ formatUpdatedAt(summary.updatedAt) }}</span>
+              <div class="group flex cursor-default items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] hover:bg-accent" :title="summary.name" @click="openRunner(summary.id)" @dblclick="openEditor(summary.id)" @contextmenu.prevent="onContextMenu($event)">
+                <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                  <LayoutDashboard class="h-4 w-4" />
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-center gap-1.5">
+                    <span class="min-w-0 truncate font-medium">{{ summary.name }}</span>
+                    <span class="shrink-0 rounded-full bg-muted px-1.5 py-px text-[10px] tabular-nums text-muted-foreground">
+                      {{ summary.queryCount }}
+                      {{ t("dataView.queries") }}
+                    </span>
+                  </div>
+                  <div v-if="summary.description" class="truncate text-[11px] text-muted-foreground/80" :title="summary.description">{{ summary.description }}</div>
+                </div>
+                <span class="shrink-0 text-[11px] tabular-nums text-muted-foreground/70">{{ formatUpdatedAt(summary.updatedAt) }}</span>
                 <span class="hidden shrink-0 items-center gap-0.5 group-hover:flex">
                   <LightTooltip :text="t('dataView.run')" side="bottom">
                     <Button variant="ghost" size="icon" class="h-5 w-5" @mousedown.stop @click.stop="openRunner(summary.id)">

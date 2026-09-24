@@ -185,6 +185,16 @@ export default {
     export: "Export",
     importSuccess: 'Imported "{name}"',
     importInvalidFile: "This file isn't a valid data view export.",
+    general: "General",
+    extractVariables: "Extract from SQL",
+    emptyVariablesHint: "No variables yet. Extract them from SQL or add one manually.",
+    autoRefresh: "Auto refresh",
+    autoRefreshOff: "Off",
+    refreshedAgo: "Refreshed {duration} ago",
+    panelStats: "{rows} rows · {cols} cols",
+    panelNoData: "No data",
+    showVariables: "Show variables",
+    hideVariables: "Hide variables",
   },
   customType: {
     kinds: {
